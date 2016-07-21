@@ -54,9 +54,9 @@ class boardAdminView extends board {
 		$this->setTemplatePath($template_path);
 
 		// install order (sorting) options
-		foreach($this->order_target as $key) $order_target[$key] = lang($key);
-		$order_target['list_order'] = lang('document_srl');
-		$order_target['update_order'] = lang('last_update');
+		foreach($this->order_target as $key) $order_target[$key] = Context::getLang($key);
+		$order_target['list_order'] = Context::getLang('regdate');
+		$order_target['update_order'] = Context::getLang('last_update');
 		Context::set('order_target', $order_target);
 	}
 
@@ -168,8 +168,7 @@ class boardAdminView extends board {
 		$oBoardModel = getModel('board');
 
 		// setup the extra vaiables
-		$extra_vars = $oBoardModel->getDefaultListConfig($this->module_info->module_srl);
-		Context::set('extra_vars', $extra_vars);
+		Context::set('extra_vars', $oBoardModel->getDefaultListConfig($this->module_info->module_srl));
 
 		// setup the list config (install the default value if there is no list config)
 		Context::set('list_config', $oBoardModel->getListConfig($this->module_info->module_srl));
@@ -182,7 +181,7 @@ class boardAdminView extends board {
 			$extra_order_target[$oExtraItem->eid] = $oExtraItem->name;
 		}
 		Context::set('extra_order_target', $extra_order_target);
-
+		
 		$security = new Security();
 		$security->encodeHTML('extra_vars..name','list_config..name');
 
@@ -200,8 +199,8 @@ class boardAdminView extends board {
 
 		// get the addtional setup trigger
 		// the additional setup triggers can be used in many modules
-		ModuleHandler::triggerCall('module.dispAdditionSetup', 'before', $content);
-		ModuleHandler::triggerCall('module.dispAdditionSetup', 'after', $content);
+		$output = ModuleHandler::triggerCall('module.dispAdditionSetup', 'before', $content);
+		$output = ModuleHandler::triggerCall('module.dispAdditionSetup', 'after', $content);
 		Context::set('setup_content', $content);
 
 		// setup the template file
@@ -260,8 +259,8 @@ class boardAdminView extends board {
 	 * @brief display extra variables
 	 **/
 	function dispBoardAdminExtraVars() {
-		$oDocumentModel = getModel('document');
-		$extra_vars_content = $oDocumentModel->getExtraVarsHTML($this->module_info->module_srl);
+		$oDocumentAdminModel = getModel('document');
+		$extra_vars_content = $oDocumentAdminModel->getExtraVarsHTML($this->module_info->module_srl);
 		Context::set('extra_vars_content', $extra_vars_content);
 
 		$this->setTemplateFile('extra_vars');
@@ -295,7 +294,7 @@ class boardAdminView extends board {
 	 * @brief board module message
 	 **/
 	function alertMessage($message) {
-		$script =  sprintf('<script> xAddEventListener(window,"load", function() { alert("%s"); } );</script>', lang($message));
+		$script =  sprintf('<script> xAddEventListener(window,"load", function() { alert("%s"); } );</script>', Context::getLang($message));
 		Context::addHtmlHeader( $script );
 	}
 }

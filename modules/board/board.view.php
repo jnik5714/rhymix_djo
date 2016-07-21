@@ -91,6 +91,11 @@ class boardView extends board
 		}
 
 		/**
+		 * 문서상태
+		 **/
+             if($this->module_info->use_doc_state!='Y') $this->module_info->use_doc_state = 'N';
+             
+		/**
 		 * setup the template path based on the skin
 		 * the default skin is default
 		 **/
@@ -108,7 +113,7 @@ class boardView extends board
 		$oDocumentModel = getModel('document');
 		$extra_keys = $oDocumentModel->getExtraKeys($this->module_info->module_srl);
 		Context::set('extra_keys', $extra_keys);
-
+		
 		/**
 		 * add extra variables to order(sorting) target
 		 **/
@@ -120,11 +125,27 @@ class boardView extends board
 			}
 		}
 		/**
+		 * 히스토리 추가 (위키모듈)
+		**/
+		$oModuleModel = &getModel('module');
+		$document_config = $oModuleModel->getModulePartConfig('document', $this->module_info->module_srl);
+		if(!isset($document_config->use_history))
+		{
+			$document_config->use_history = 'N';
+		}
+		$this->module_info->use_history = $document_config->use_history;
+		Context::set('use_history', $document_config->use_history);
+		
+		/**
 		 * load javascript, JS filters
 		 **/
 		Context::addJsFilter($this->module_path.'tpl/filter', 'input_password.xml');
 		Context::addJsFile($this->module_path.'tpl/js/board.js');
 
+            // board 모듈 함수 사용을 위해 셋팅
+            $oBoard = new boardItem($this->module_srl, $this->module_info->display_extra_images);
+            Context::set('oBoard', $oBoard);
+            
 		// remove [document_srl]_cpage from get_vars
 		$args = Context::getRequestVars();
 		foreach($args as $name => $value)
@@ -136,7 +157,7 @@ class boardView extends board
 			}
 		}
 	}
-
+        
 	/**
 	 * @brief display board contents
 	 **/
@@ -154,13 +175,15 @@ class boardView extends board
 		 * display the category list, and then setup the category list on context
 		 **/
 		$this->dispBoardCategoryList();
+		
+            Context::set('doc_state_list', explode(',',$this->module_info->use_doc_state_value));
 
 		/**
 		 * display the search options on the screen
 		 * add extra vaiables to the search options
 		 **/
 		// use search options on the template (the search options key has been declared, based on the language selected)
-		foreach($this->search_option as $opt) $search_option[$opt] = lang($opt);
+		foreach($this->search_option as $opt) $search_option[$opt] = Context::getLang($opt);
 		$extra_keys = Context::get('extra_keys');
 		if($extra_keys)
 		{
@@ -247,6 +270,7 @@ class boardView extends board
 
 		// generate document model object
 		$oDocumentModel = getModel('document');
+		$oBoardModel = &getModel('board');
 
 		/**
 		 * if the document exists, then get the document information
@@ -276,7 +300,6 @@ class boardView extends board
 						$oDocument = $oDocumentModel->getDocument(0);
 					}
 				}
-
 				// if the document is TEMP saved, check Grant
 				if($oDocument->getStatus() == 'TEMP')
 				{
@@ -285,7 +308,10 @@ class boardView extends board
 						$oDocument = $oDocumentModel->getDocument(0);
 					}
 				}
-
+	                    // 문서타입
+				$doc_type = $oBoardModel->getBoardDocumentType($document_srl);
+				$oDocument->add('document_type', $doc_type->point);
+                    
 			}
 			else
 			{
@@ -317,33 +343,21 @@ class boardView extends board
 			else
 			{
 				// add the document title to the browser
-				Context::setCanonicalURL($oDocument->getPermanentUrl());
-				$seo_title = config('seo.document_title') ?: '$SITE_TITLE - $DOCUMENT_TITLE';
-				getController('module')->replaceDefinedLangCode($seo_title);
-				Context::setBrowserTitle($seo_title, array(
-					'site_title' => Context::getSiteTitle(),
-					'site_subtitle' => Context::getSiteSubtitle(),
-					'subpage_title' => $module_info->browser_title,
-					'document_title' => $oDocument->getTitleText(),
-					'page' => Context::get('page') ?: 1,
-				));
+				Context::addBrowserTitle($oDocument->getTitleText());
 
 				// update the document view count (if the document is not secret)
 				if(!$oDocument->isSecret() || $oDocument->isGranted())
 				{
 					$oDocument->updateReadedCount();
 				}
-
 				// disappear the document if it is secret
 				if($oDocument->isSecret() && !$oDocument->isGranted())
 				{
-					$oDocument->add('content',lang('thisissecret'));
+					$oDocument->add('content',Context::getLang('thisissecret'));
 				}
 			}
 		}
-
-		Context::set('update_view', $this->grant->update_view);
-
+		
 		// setup the document oject on context
 		$oDocument->add('module_srl', $this->module_srl);
 		Context::set('oDocument', $oDocument);
@@ -352,7 +366,11 @@ class boardView extends board
 		 * add javascript filters
 		 **/
 		Context::addJsFilter($this->module_path.'tpl/filter', 'insert_comment.xml');
-
+             // 베스트 댓글 출력 사용중이면 세팅
+             if($this->module_info->display_best_comment=='Y') {
+                $oBoardModel = &getModel('board');
+                Context::set('best_comment_list', $oBoardModel->getBestCommentList($oDocument));
+             }
 //            return new Object();
 	}
 
@@ -428,7 +446,7 @@ class boardView extends board
 	function dispBoardContentCommentList(){
 		// check document view grant
 		$this->dispBoardContentView();
-
+		
 		$oDocumentModel = getModel('document');
 		$document_srl = Context::get('document_srl');
 		$oDocument = $oDocumentModel->getDocument($document_srl);
@@ -441,7 +459,7 @@ class boardView extends board
 			{
 				if(!$val->isAccessible())
 				{
-					$val->add('content',lang('thisissecret'));
+					$val->add('content',Context::getLang('thisissecret'));
 				}
 			}
 		}
@@ -459,7 +477,7 @@ class boardView extends board
 			Context::set('notice_list', array());
 			return;
 		}
-
+		
 		$oDocumentModel = getModel('document');
 		$args = new stdClass();
 		$args->module_srl = $this->module_srl;
@@ -482,19 +500,20 @@ class boardView extends board
 			return;
 		}
 
-		$oDocumentModel = getModel('document');
-
+		$oDocumentModel = &getModel('document');
+		$oBoardModel = &getModel('board');
+		
 		// setup module_srl/page number/ list number/ page count
 		$args = new stdClass();
 		$args->module_srl = $this->module_srl;
 		$args->page = Context::get('page');
 		$args->list_count = $this->list_count;
 		$args->page_count = $this->page_count;
-
-		// get the search target and keyword
+             
+            // 검색과 정렬을 위한 변수 설정
 		$args->search_target = Context::get('search_target');
 		$args->search_keyword = Context::get('search_keyword');
-
+		
 		$search_option = Context::get('search_option');
 		if($search_option==FALSE)
 		{
@@ -504,13 +523,19 @@ class boardView extends board
 		{
 			$args->search_target = '';
 		}
-
+		
 		// if the category is enabled, then get the category
 		if($this->module_info->use_category=='Y')
 		{
 			$args->category_srl = Context::get('category');
 		}
 
+            // 상태일 경우 explode 키값 구함
+            if($args->search_target=='doc_state') {
+                $doc_state_list = explode(',',$this->module_info->use_doc_state_value);
+                $args->search_keyword = (string) array_search($args->search_keyword, $doc_state_list);
+            }
+            
 		// setup the sort index and order index
 		$args->sort_index = Context::get('sort_index');
 		$args->order_type = Context::get('order_type');
@@ -542,22 +567,49 @@ class boardView extends board
 			$args->list_count = $this->search_list_count;
 		}
 
-		// if the consultation function is enabled,  the get the logged user information
+            // 상담 기능이 on되어 있으면 현재 로그인 사용자의 글만 나타나도록 옵션 변경
 		if($this->consultation)
 		{
 			$logged_info = Context::get('logged_info');
 			$args->member_srl = $logged_info->member_srl;
 		}
-
 		// setup the list config variable on context
 		Context::set('list_config', $this->listConfig);
-		// setup document list variables on context
-		$output = $oDocumentModel->getDocumentList($args, $this->except_notice, TRUE, $this->columnList);
-		Context::set('document_list', $output->data);
+		
+		$output = $oBoardModel->getDocumentList($args, $this->except_notice, TRUE, $this->columnList);
+		if (!$output->toBool()) return $output;
+            $documents = &$output->data;
+            
+            $document_srl_list = array();
+            $document_index = array();
+            if (is_array($documents)) {
+                foreach($documents as $key => $document) {
+                    $document_srl_list[$key] = $document->document_srl;
+                    $document_index[$document->document_srl] = $key;
+                }
+            }
+            
+            if (count($document_srl_list) > 0) {
+                unset($args);
+                $args->document_srls = join(',', $document_srl_list);
+
+                // 문서타입
+                $document_type = executeQueryArray('board.getBoardDocumentType', $args);
+                if ($document_type->data) {
+                    foreach($document_type->data as $val) {
+                        $documents[$document_index[$val->document_srl]]->document_type = $val;
+                    }
+                }
+            }
+		Context::set('document_list', $documents);
 		Context::set('total_count', $output->total_count);
 		Context::set('total_page', $output->total_page);
 		Context::set('page', $output->page);
 		Context::set('page_navigation', $output->page_navigation);
+            // 베스트 글 출력 사용중이면 세팅
+            if($this->module_info->display_best_document=='Y') {
+                Context::set('best_document_list', $oBoardModel->getBestDocumentList($this->module_srl, $this->module_info));
+            }
 	}
 
 	function _makeListColumnList()
@@ -647,14 +699,12 @@ class boardView extends board
 	 **/
 	function dispBoardWrite()
 	{
-		// check grant
+		// check grant 
 		if(!$this->grant->write_document)
 		{
 			return $this->dispBoardMessage('msg_not_permitted');
 		}
-
 		$oDocumentModel = getModel('document');
-		$logged_info = Context::get('logged_info');
 
 		/**
 		 * check if the category option is enabled not not
@@ -664,6 +714,7 @@ class boardView extends board
 			// get the user group information
 			if(Context::get('is_logged'))
 			{
+				$logged_info = Context::get('logged_info');
 				$group_srls = array_keys($logged_info->group_list);
 			}
 			else
@@ -691,45 +742,34 @@ class boardView extends board
 			}
 			Context::set('category_list', $category_list);
 		}
-
+		
 		// GET parameter document_srl from request
 		$document_srl = Context::get('document_srl');
 		$oDocument = $oDocumentModel->getDocument(0, $this->grant->manager);
 		$oDocument->setDocument($document_srl);
 
-		$oMemberModel = getModel('member');
-		$member_info = $oMemberModel->getMemberInfoByMemberSrl($oDocument->get('member_srl'));
-
 		if($oDocument->get('module_srl') == $oDocument->get('member_srl')) $savedDoc = TRUE;
 		$oDocument->add('module_srl', $this->module_srl);
 
-		if($oDocument->isExists())
+            // 보호된 내용
+		if($oDocument->isExists() && $this->module_info->protect_content=="Y" && $oDocument->get('comment_count')>0 && $this->grant->manager==false)
 		{
-			if($this->module_info->protect_document_regdate > 0 && $this->grant->manager == false)
-			{
-				if($oDocument->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-				{
-					$format =  lang('msg_protect_regdate_document');
-					$massage = sprintf($format, $this->module_info->protect_document_regdate);
-					return new Object(-1, $massage);
-				}
-			}
-			if($this->module_info->protect_content == "Y" || $this->module_info->protect_update_content == 'Y')
-			{
-				if($oDocument->get('comment_count') > 0 && $this->grant->manager == false)
-				{
-					return new Object(-1, 'msg_protect_update_content');
-				}
-			}
+			return new Object(-1, 'msg_protect_content');
 		}
-		if($member_info->is_admin == 'Y' && $logged_info->is_admin != 'Y')
-		{
-			return new Object(-1, 'msg_admin_document_no_modify');
-		}
-
+		
+            // 문서타입
+            $oBoardModel = getModel('board');
+            $doc_type = $oBoardModel->getBoardDocumentType($document_srl);
+            $oDocument->add('document_type', $doc_type->point);
+            
 		// if the document is not granted, then back to the password input form
 		$oModuleModel = getModel('module');
-		if($oDocument->isExists()&&!$oDocument->isGranted())
+		// 공용문서가 아니고, 권한이 없으면 패스워트 폼이 보이게 변경
+		/*if($oDocument->isExists()&&!$oDocument->isGranted())
+		{
+			return $this->setTemplateFile('input_password_form');
+		}*/
+		if($doc_type->point != '1'&&$oDocument->isExists()&&!$oDocument->isGranted())
 		{
 			return $this->setTemplateFile('input_password_form');
 		}
@@ -742,16 +782,16 @@ class boardView extends board
 			$pointForInsert = $point_config["insert_document"];
 			if($pointForInsert < 0)
 			{
-				if(!Context::get('is_logged'))
+				if( !$logged_info )
 				{
 					return $this->dispBoardMessage('msg_not_permitted');
 				}
-				else if(($oPointModel->getPoint($logged_info->member_srl) + $pointForInsert) < 0)
+				else if (($oPointModel->getPoint($logged_info->member_srl) + $pointForInsert )< 0 )
 				{
 					return $this->dispBoardMessage('msg_not_enough_point');
 				}
 			}
-		}
+		} 
 		if(!$oDocument->get('status')) $oDocument->add('status', $oDocumentModel->getDefaultStatus());
 
 		$statusList = $this->_getStatusNameList($oDocumentModel);
@@ -770,8 +810,8 @@ class boardView extends board
 
 		/**
 		 * add JS filters
-		 **/
-		if(Context::get('logged_info')->is_admin=='Y') Context::addJsFilter($this->module_path.'tpl/filter', 'insert_admin.xml');
+		 **/		
+		 if(Context::get('logged_info')->is_admin=='Y') Context::addJsFilter($this->module_path.'tpl/filter', 'insert_admin.xml');
 		else Context::addJsFilter($this->module_path.'tpl/filter', 'insert.xml');
 
 		$oSecurity = new Security();
@@ -779,7 +819,6 @@ class boardView extends board
 
 		$this->setTemplateFile('write_form');
 	}
-
 	function _getStatusNameList(&$oDocumentModel)
 	{
 		$resultList = array();
@@ -812,14 +851,13 @@ class boardView extends board
 
 		// get the document_srl from request
 		$document_srl = Context::get('document_srl');
-
-		// if document exists, get the document information
+		
 		if($document_srl)
 		{
 			$oDocumentModel = getModel('document');
 			$oDocument = $oDocumentModel->getDocument($document_srl);
 		}
-
+		
 		// if the document is not existed, then back to the board content page
 		if(!$oDocument->isExists())
 		{
@@ -832,22 +870,9 @@ class boardView extends board
 			return $this->setTemplateFile('input_password_form');
 		}
 
-		if($this->module_info->protect_document_regdate > 0 && $this->grant->manager == false)
+		if($this->module_info->protect_content=="Y" && $oDocument->get('comment_count')>0 && $this->grant->manager==false)
 		{
-			if($oDocument->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-			{
-				$format =  lang('msg_protect_regdate_document');
-				$massage = sprintf($format, $this->module_info->protect_document_regdate);
-				return new Object(-1, $massage);
-			}
-		}
-
-		if($this->module_info->protect_content == "Y" || $this->module_info->protect_delete_content == 'Y')
-		{
-			if($oDocument->get('comment_count')>0 && $this->grant->manager == false)
-			{
-				return new Object(-1,'msg_protect_delete_content');
-			}
+			return $this->dispBoardMessage('msg_protect_content');
 		}
 
 		Context::set('oDocument',$oDocument);
@@ -971,7 +996,6 @@ class boardView extends board
 	 **/
 	function dispBoardModifyComment()
 	{
-		$logged_info = Context::get('logged_info');
 		// check grant
 		if(!$this->grant->write_comment)
 		{
@@ -991,31 +1015,6 @@ class boardView extends board
 		// get comment information
 		$oCommentModel = getModel('comment');
 		$oComment = $oCommentModel->getComment($comment_srl, $this->grant->manager);
-
-		$oMemberModel = getModel('member');
-		$member_info = $oMemberModel->getMemberInfoByMemberSrl($oComment->member_srl);
-		if($this->module_info->protect_comment_regdate > 0 && $this->grant->manager == false)
-		{
-			if($oComment->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-			{
-				$format =  lang('msg_protect_regdate_comment');
-				$massage = sprintf($format, $this->module_info->protect_document_regdate);
-				return new Object(-1, $massage);
-			}
-		}
-		if($this->module_info->protect_update_comment === 'Y' && $this->grant->manager == false)
-		{
-			$childs = $oCommentModel->getChildComments($comment_srl);
-			if(count($childs) > 0)
-			{
-				return new Object(-1, 'msg_board_update_protect_comment');
-			}
-		}
-
-		if($member_info->is_admin == 'Y' && $logged_info->is_admin != 'Y')
-		{
-			return new Object(-1, 'msg_admin_comment_no_modify');
-		}
 
 		// if the comment is not exited, alert an error message
 		if(!$oComment->isExists())
@@ -1060,26 +1059,6 @@ class boardView extends board
 		{
 			$oCommentModel = getModel('comment');
 			$oComment = $oCommentModel->getComment($comment_srl, $this->grant->manager);
-		}
-
-		if($this->module_info->protect_comment_regdate > 0 && $this->grant->manager == false)
-		{
-			if($oComment->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-			{
-				$format =  lang('msg_protect_regdate_comment');
-				$massage = sprintf($format, $this->module_info->protect_document_regdate);
-				return new Object(-1, $massage);
-			}
-		}
-
-		if($this->module_info->protect_delete_comment === 'Y' && $this->grant->manager == false)
-		{
-			$oCommentModel = getModel('comment');
-			$childs = $oCommentModel->getChildComments($comment_srl);
-			if(count($childs) > 0)
-			{
-				return new Object(-1, 'msg_board_delete_protect_comment');
-			}
 		}
 
 		// if the comment is not existed, then back to the board content page
@@ -1145,62 +1124,60 @@ class boardView extends board
 	 **/
 	function dispBoardMessage($msg_code)
 	{
-		Context::set('message', lang($msg_code));
-		
-		$this->setHttpStatusCode(403);
+		$msg = Context::getLang($msg_code);
+		if(!$msg) $msg = $msg_code;
+		Context::set('message', $msg);
 		$this->setTemplateFile('message');
 	}
-
-	function dispBoardUpdateLog()
-	{
-		$oDocumentModel = getModel('document');
+	// ajax 댓글페이징
+	function getBoardCommentList() {
 		$document_srl = Context::get('document_srl');
-
-		if($this->grant->update_view !== true)
-		{
-			return new Object(-1, 'msg_not_permitted');
-		}
-
-		$updatelog = $oDocumentModel->getDocumentUpdateLog($document_srl);
-		Context::set('total_count', $updatelog->page_navigation->total_count);
-		Context::set('total_page', $updatelog->page_navigation->total_page);
-		Context::set('page', $updatelog->page);
-		Context::set('page_navigation', $updatelog->page_navigation);
-		Context::set('updatelog', $updatelog);
-
-		$this->setTemplateFile('update_list');
+		$oDocumentModel = &getModel('document');
+		if(!$document_srl) return new Object(-1, "msg_invalid_request");
+		$oDocument = $oDocumentModel->getDocument($document_srl);
+		if(!$oDocument->isExists()) return new Object(-1, "msg_invalid_request");
+		Context::set('oDocument', $oDocument);
+		$oTemplate = new TemplateHandler;
+		$html = $oTemplate->compile($this->getTemplatePath(), "comment.html");
+		$this->add("html", $html);
 	}
-
-	function dispBoardUpdateLogView()
-	{
-		$oDocumentModel = getModel('document');
-		$update_id = Context::get('update_id');
-
-		if($this->grant->update_view !== true)
-		{
-			return new Object(-1, 'msg_not_permitted');
-		}
-		$update_log = $oDocumentModel->getUpdateLog($update_id);
-		$extra_vars = unserialize($update_log->extra_vars);
-
-		Context::addJsFilter($this->module_path.'tpl/filter', 'update.xml');
-
-		Context::set('extra_vars', $extra_vars);
-		Context::set('update_log', $update_log);
-
-		$this->setTemplateFile('update_view');
-	}
-
 	/**
 	 * @brief the method for displaying the warning messages
 	 * display an error message if it has not  a special design
 	 **/
 	function alertMessage($message)
 	{
-		$script =  sprintf('<script> jQuery(function(){ alert("%s"); } );</script>', lang($message));
-		Context::addHtmlFooter($script);
-		
-		$this->setHttpStatusCode(403);
+		$script =  sprintf('<script> jQuery(function(){ alert("%s"); } );</script>', Context::getLang($message));
+		Context::addHtmlFooter( $script );
 	}
+        /* 히스토리 목록 */
+        function dispBoardHistoryList(){
+            $document_srl = Context::get('document_srl');
+            if(!$document_srl) return $this->dispBoardMessage('msg_invalid_request');
 
+            $hpage = Context::get('hpage');
+
+            $oDocumentModel = &getModel('document');
+            $output = $oDocumentModel->getHistories($document_srl, 20, $hpage);
+
+            Context::set('history_list', $output->data);
+            Context::set('total_hcount', $output->total_count);
+            Context::set('total_hpage', $output->total_page);
+            Context::set('hpage', $output->page);
+            Context::set('hpage_navigation', $output->page_navigation);
+
+            $history_srl = Context::get('history_srl');
+            if($history_srl) {
+                $history_data = $oDocumentModel->getHistory($history_srl);
+                Context::set('history_data', $history_data);
+
+                // 레이아웃을 popup_layout으로 설정
+                if(Context::get('is_poped')) $this->setLayoutFile('popup_layout');
+                $this->setTemplateFile('history');
+            }else{
+                $this->dispBoardContent();
+            }
+		$security = new Security();
+		$security->encodeHTML('history_list..nick_name');
+        }
 }

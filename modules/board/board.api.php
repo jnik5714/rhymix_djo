@@ -50,7 +50,7 @@ class boardAPI extends board {
 	/**
 	 * @brief category list
 	 **/
-	function dispBoardCategoryList(&$oModule) {
+	function dispBoardCatogoryList(&$oModule) {
 		$oModule->add('category_list',Context::get('category_list'));
 	}
 
@@ -87,6 +87,7 @@ class boardAPI extends board {
 		$oModule->add('comment_list',$this->arrangeComment(Context::get('comment_list')));
 	}
 
+        
 	function arrangeContentList($content_list) {
 		$output = array();
 		if(count($content_list)) {
@@ -97,7 +98,6 @@ class boardAPI extends board {
 
 
 	function arrangeContent($content) {
-		$oBoardView = getView('board');
 		$output = new stdClass;
 		if($content){
 			$output = $content->gets('document_srl','category_srl','member_srl','nick_name','user_id','user_name','title','content','tags','readed_count','voted_count','blamed_count','comment_count','regdate','last_update','extra_vars','status');
@@ -108,7 +108,7 @@ class boardAPI extends board {
 				unset($output->tags);
 				unset($output->extra_vars);
 			}
-
+			
 			$t_width  = Context::get('thumbnail_width');
 			$t_height = Context::get('thumbnail_height');
 			$t_type   = Context::get('thumbnail_type');

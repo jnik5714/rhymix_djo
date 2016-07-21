@@ -19,7 +19,7 @@ class boardAdminController extends board {
 	 * @brief insert borad module
 	 **/
 	function procBoardAdminInsertBoard($args = null) {
-		// generate module model/controller object
+		// igenerate module model/controller object
 		$oModuleController = getController('module');
 		$oModuleModel = getModel('module');
 
@@ -41,18 +41,27 @@ class boardAdminController extends board {
 				$extra_order_target[$oExtraItem->eid] = $oExtraItem->name;
 			}
 		}
-
+		
 		// setup other variables
 		if($args->except_notice != 'Y') $args->except_notice = 'N';
 		if($args->use_anonymous != 'Y') $args->use_anonymous = 'N';
 		if($args->consultation != 'Y') $args->consultation = 'N';
 		if($args->protect_content!= 'Y') $args->protect_content = 'N';
+		// 문서상태 추가
+            if($args->use_doc_state!='Y') $args->use_doc_state = 'N';
+            if(!$args->use_doc_state_value) $args->use_doc_state_value = Context::getLang('use_doc_state_default_value');
+            
+            // use_doc_state_value 값이 10개 보다 많으면  10개로 맞춤
+            $use_doc_state_value=explode(',',$args->use_doc_state_value);
+            if(count($use_doc_state_value)>10){
+                for($i=count($use_doc_state_value)-1; 9 < $i  ;$i--){
+                    array_pop($use_doc_state_value);
+                }
+                $args->use_doc_state_value = implode(',',$use_doc_state_value);
+            }
+            
 		if(!in_array($args->order_target,$this->order_target) && !array_key_exists($args->order_target, $extra_order_target)) $args->order_target = 'list_order';
 		if(!in_array($args->order_type, array('asc', 'desc'))) $args->order_type = 'asc';
-		
-		$args->browser_title = trim(utf8_normalize_spaces($args->browser_title));
-		$args->meta_keywords = $args->meta_keywords ? implode(', ', array_map('trim', explode(',', $args->meta_keywords))) : '';
-		$args->meta_description = trim(utf8_normalize_spaces($args->meta_description));
 
 		// if there is an existed module
 		if($args->module_srl) {

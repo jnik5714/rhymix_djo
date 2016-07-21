@@ -7,32 +7,18 @@
  * @brief  board module high class
  **/
 
+    require_once(_XE_PATH_.'modules/board/board.item.php');
+    
 class board extends ModuleObject
 {
-	var $search_option = array('title_content','title','content','comment','user_name','nick_name','user_id','tag'); ///< 검색 옵션
+	var $search_option = array('title','content','title_content','nick_name','tag'); ///< 검색 옵션
 
-	var $order_target = array('list_order', 'update_order', 'regdate', 'voted_count', 'blamed_count', 'readed_count', 'comment_count', 'title', 'nick_name', 'user_name', 'user_id'); // 정렬 옵션
+	var $order_target = array('list_order', 'update_order', 'regdate', 'voted_count', 'blamed_count', 'readed_count', 'comment_count', 'title'); // 정렬 옵션
 
 	var $skin = "default"; ///< skin name
 	var $list_count = 20; ///< the number of documents displayed in a page
 	var $page_count = 10; ///< page number
 	var $category_list = NULL; ///< category list
-
-	/**
-	 * constructor
-	 *
-	 * @return void
-	 */
-	function __construct()
-	{
-		if(!Context::isInstalled()) return;
-
-		if(!Context::isExistsSSLAction('dispBoardWrite') && Context::getSslStatus() == 'optional')
-		{
-			$ssl_actions = array('dispBoardWrite', 'dispBoardWriteComment', 'dispBoardReplyComment', 'dispBoardModifyComment', 'dispBoardDelete', 'dispBoardDeleteComment', 'procBoardInsertDocument', 'procBoardDeleteDocument', 'procBoardInsertComment', 'procBoardDeleteComment', 'procBoardVerificationPassword');
-			Context::addSSLActions($ssl_actions);
-		}
-	}
 
 	/**
 	 * @brief install the module
@@ -54,7 +40,7 @@ class board extends ModuleObject
 		{
 			$args->mid = 'board';
 			$args->module = 'board';
-			$args->browser_title = 'Rhymix';
+			$args->browser_title = 'XpressEngine';
 			$args->skin = 'default';
 			$args->site_srl = 0;
 			$output = $oModuleController->insertModule($args);

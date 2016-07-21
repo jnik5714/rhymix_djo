@@ -27,10 +27,6 @@ class boardController extends board
 		{
 			return new Object(-1, "msg_invalid_request");
 		}
-		if(!$this->grant->write_document)
-		{
-			return new Object(-1, 'msg_not_permitted');
-		}
 		$logged_info = Context::get('logged_info');
 
 		// setup variables
@@ -40,7 +36,7 @@ class boardController extends board
 		$obj->commentStatus = $obj->comment_status;
 
 		settype($obj->title, "string");
-		if($obj->title == '') $obj->title = cut_str(trim(strip_tags(nl2br($obj->content))),20,'...');
+		if($obj->title == '') $obj->title = cut_str(strip_tags($obj->content),20,'...');
 		//setup dpcument title tp 'Untitled'
 		if($obj->title == '') $obj->title = 'Untitled';
 
@@ -49,10 +45,6 @@ class boardController extends board
 		{
 			unset($obj->title_color);
 			unset($obj->title_bold);
-		}
-		else
-		{
-			$obj->is_admin = 'Y';
 		}
 
 		// generate document module model object
@@ -70,14 +62,7 @@ class boardController extends board
 		{
 			$is_update = true;
 		}
-
-		$oMemberModel = getModel('member');
-		$member_info = $oMemberModel->getMemberInfoByMemberSrl($oDocument->get('member_srl'));
-		if($member_info->is_admin == 'Y' && $logged_info->is_admin != 'Y')
-		{
-			return new Object(-1, 'msg_admin_document_no_modify');
-		}
-
+		
 		// if use anonymous is true
 		if($this->module_info->use_anonymous == 'Y')
 		{
@@ -88,7 +73,7 @@ class boardController extends board
 				$obj->member_srl = -1*$logged_info->member_srl;
 			}
 			$obj->email_address = $obj->homepage = $obj->user_id = '';
-			$obj->user_name = $obj->nick_name = $this->createAnonymousName($this->module_info->anonymous_name ?: 'anonymous', $logged_info->member_srl, $obj->document_srl);
+			$obj->user_name = $obj->nick_name = 'anonymous';
 			$bAnonymous = true;
 			if($is_update===false)
 			{
@@ -100,7 +85,7 @@ class boardController extends board
 			$bAnonymous = false;
 		}
 
-		if($obj->is_secret == 'Y' || strtoupper($obj->status == 'SECRET'))
+		if(($obj->is_secret == 'Y') || strtoupper($obj->status == 'SECRET'))
 		{
 			$use_status = explode('|@|', $this->module_info->use_status);
 			if(!is_array($use_status) || !in_array('SECRET', $use_status))
@@ -110,40 +95,27 @@ class boardController extends board
 			}
 		}
 
-		if($this->module_info->update_log == 'Y')
-		{
-			$obj->update_log_setting = 'Y';
-		}
-
 		// update the document if it is existed
 		if($is_update)
 		{
-			if(!$oDocument->isGranted())
+			$document_srl = Context::get('document_srl');
+			$oBoardModel = getModel('board');
+			$doc_type = $oBoardModel->getBoardDocumentType($document_srl);
+     	       $oDocument->add('document_type', $doc_type->point);			
+     	       if($doc_type->point == '1')
 			{
-				return new Object(-1,'msg_not_permitted');
 			}
-
-			if($this->module_info->protect_content == 'Y' || $this->module_info->protect_update_content == 'Y')
+			if($doc_type->point == '0')
 			{
-				if($oDocument->get('comment_count') > 0 && $this->grant->manager == false)
+				if(!$oDocument->isGranted())
 				{
-					return new Object(-1, 'msg_protect_update_content');
+					return new Object(-1,'msg_not_permitted');
 				}
 			}
 
-			if($this->module_info->use_anonymous == 'Y') {
-				$obj->member_srl = abs($oDocument->get('member_srl')) * -1;
-				$oDocument->add('member_srl', $obj->member_srl);
-			}
-
-			if($this->module_info->protect_document_regdate > 0 && $this->grant->manager == false)
+			if($this->module_info->protect_content=="Y" && $oDocument->get('comment_count')>0 && $this->grant->manager==false)
 			{
-				if($oDocument->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-				{
-					$format =  lang('msg_protect_regdate_document');
-					$massage = sprintf($format, $this->module_info->protect_document_regdate);
-					return new Object(-1, $massage);
-				}
+				return new Object(-1,'msg_protect_content');
 			}
 
 			if(!$this->grant->manager)
@@ -160,34 +132,59 @@ class boardController extends board
 				$obj->last_update = $obj->regdate = date('YmdHis');
 				$obj->update_order = $obj->list_order = (getNextSequence() * -1);
 			}
-			$obj->reason_update = escape($obj->reason_update);
-			$output = $oDocumentController->updateDocument($oDocument, $obj, true);
+
+                // 확장 필드에 값이 있으면 새로 셋팅
+                $extra_vars = unserialize($oDocument->get('extra_vars'));
+                if($extra_vars) $obj->extra_vars = $extra_vars;
+			
+                // 히스토리 사용중인지 체크
+                $module_srl = $oDocument->get('module_srl');
+                $oModuleModel = &getModel('module');
+                $document_config = $oModuleModel->getModulePartConfig('document', $module_srl);
+                if(!isset($document_config->use_history)) $document_config->use_history = 'N';
+                $bUseHistory = $document_config->use_history == 'Y' || $document_config->use_history == 'Trace';
+
+                // (히스토리) 익명 사용시 익명 정보 갱신
+                // 문서 수정시 에러 발생으로 주석처리
+                /*if($logged_info && ($bUseHistory || ($logged_info->member_srl == $oDocument->member_srl) && (($is_anonymous && $oDocument->member_srl > 0)||(!$is_anonymous && $oDocument->member_srl < 0)))){
+                    $any_args = $this->_setUserInfo($is_anonymous, $logged_info);
+                    $any_args->document_srl = $output->get('document_srl');
+                    $anonymous_output = executeQuery('board.updateDocumentUserInfo', $any_args);
+                    if(!$anonymous_output->toBool()) return $anonymous_output;
+                }*/
+
+			$output = $oDocumentController->updateDocument($oDocument, $obj);
 			$msg_code = 'success_updated';
 
 		// insert a new document otherwise
-		}
-		else
-		{
+		} else {
+			// check grant (공용문서에서 수정가능하기위해 이동)
+			if(!$this->grant->write_document)
+			{
+				return $this->dispBoardMessage('msg_not_permitted');
+			}
+                
+			// 모바일에서 작성시 정보 저장
+			if($this->module_info->use_mobile_express && Mobile::isFromMobilePhone()){
+				unset($extra_vars);
+				$extra_vars->board->d->mp = true;
+				// Document 모듈에서 serialize($extra_vars) 자동으로 함
+				$obj->extra_vars = $extra_vars;
+			}
+                
 			$output = $oDocumentController->insertDocument($obj, $bAnonymous);
 			$msg_code = 'success_registed';
 			$obj->document_srl = $output->get('document_srl');
 
+  	  		// 문서타입기록 (새문서일때만)
+			$this->insertDocumentType($obj);
 			// send an email to admin user
 			if($output->toBool() && $this->module_info->admin_mail)
 			{
-				$oModuleModel = getModel('module');
-				$member_config = $oModuleModel->getModuleConfig('member');
-				$is_logged = Context::get('is_logged');
-
-				if(!$is_logged && !$member_config->webmaster_email)
-				{
-					$obj->email_address = $this->module_info->admin_mail;
-				}
-				
 				$oMail = new Mail();
 				$oMail->setTitle($obj->title);
 				$oMail->setContent( sprintf("From : <a href=\"%s\">%s</a><br/>\r\n%s", getFullUrl('','document_srl',$obj->document_srl), getFullUrl('','document_srl',$obj->document_srl), $obj->content));
-				$oMail->setSender($obj->user_name ?: null, $obj->email_address ? $obj->email_address : $member_config->webmaster_email);
+				$oMail->setSender($obj->user_name, $obj->email_address);
 
 				$target_mail = explode(',',$this->module_info->admin_mail);
 				for($i=0;$i<count($target_mail);$i++)
@@ -207,54 +204,11 @@ class boardController extends board
 		}
 
 		// return the results
-		$this->setRedirectUrl(getNotEncodedUrl('', 'mid', Context::get('mid'), 'act', '', 'document_srl', $output->get('document_srl')));
 		$this->add('mid', Context::get('mid'));
 		$this->add('document_srl', $output->get('document_srl'));
-
+            
 		// alert a message
 		$this->setMessage($msg_code);
-	}
-
-	function procBoardRevertDocument()
-	{
-		$update_id = Context::get('update_id');
-		$logged_info = Context::get('logged_info');
-		if(!$update_id)
-		{
-			return new Object(-1, 'msg_no_update_id');
-		}
-
-		$oDocumentModel = getModel('document');
-		$oDocumentController = getController('document');
-		$update_log = $oDocumentModel->getUpdateLog($update_id);
-
-		if($logged_info->is_admin != 'Y')
-		{
-			$Exists_log = $oDocumentModel->getUpdateLogAdminisExists($update_log->document_srl);
-			if($Exists_log === true)
-			{
-				return new Object(-1, 'msg_admin_update_log');
-			}
-		}
-
-		if(!$update_log)
-		{
-			return new Object(-1, 'msg_no_update_log');
-		}
-
-		$oDocument = $oDocumentModel->getDocument($update_log->document_srl);
-		$obj = new stdClass();
-		$obj->title = $update_log->title;
-		$obj->document_srl = $update_log->document_srl;
-		$obj->title_bold = $update_log->title_bold;
-		$obj->title_color = $update_log->title_color;
-		$obj->content = $update_log->content;
-		$obj->update_log_setting = 'Y';
-		$obj->reason_update = lang('board.revert_reason_update');
-		$output = $oDocumentController->updateDocument($oDocument, $obj);
-		$this->setRedirectUrl(getNotEncodedUrl('', 'mid', Context::get('mid'),'act', '', 'document_srl', $update_log->document_srl));
-		$this->add('mid', Context::get('mid'));
-		$this->add('document_srl', $update_log->document_srl);
 	}
 
 	/**
@@ -268,54 +222,39 @@ class boardController extends board
 		// if the document is not existed
 		if(!$document_srl)
 		{
-			return new Object(-1, 'msg_invalid_document');
+			return $this->doError('msg_invalid_document');
 		}
-
+             
+            // 공용문서 사용시 관리자 외에 삭제불가
+            $oBoardModel = getModel('board');
+            $doc_type = $oBoardModel->getBoardDocumentType($document_srl);
+            if(!$this->grant->manager && $doc_type->point == '1'){
+			return new Object(-1, '공용문서는 삭제할 수 없습니다.');
+            }
 		$oDocumentModel = &getModel('document');
 		$oDocument = $oDocumentModel->getDocument($document_srl);
 		// check protect content
-		if($this->module_info->protect_content == 'Y' || $this->module_info->protect_delete_content == 'Y')
+		if($this->module_info->protect_content=="Y" && $oDocument->get('comment_count')>0 && $this->grant->manager==false)
 		{
-			if($oDocument->get('comment_count') > 0 && $this->grant->manager == false)
-			{
-				return new Object(-1, 'msg_protect_delete_content');
-			}
-		}
-
-		if($this->module_info->protect_document_regdate > 0 && $this->grant->manager == false)
-		{
-			if($oDocument->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-			{
-				$format =  lang('msg_protect_regdate_document');
-				$massage = sprintf($format, $this->module_info->protect_document_regdate);
-				return new Object(-1, $massage);
-			}
+			return new Object(-1, 'msg_protect_content');
 		}
 		// generate document module controller object
 		$oDocumentController = getController('document');
-		if($this->module_info->trash_use == 'Y')
+
+		// delete the document
+		$output = $oDocumentController->deleteDocument($document_srl, $this->grant->manager);
+		if(!$output->toBool())
 		{
-			// move the trash
-			$output = $oDocumentController->moveDocumentToTrash($oDocument);
-			if(!$output->toBool())
-			{
-				return $output;
-			}
-		}
-		else
-		{
-			// delete the document
-			$output = $oDocumentController->deleteDocument($document_srl, $this->grant->manager);
-			if(!$output->toBool())
-			{
-				return $output;
-			}
+			return $output;
 		}
 
+            $args->document_srl = $document_srl;
+            // 문서타입삭제
+            executeQuery('board.deleteDocumentType', $args);
+
 		// alert an message
-		$this->setRedirectUrl(getNotEncodedUrl('', 'mid', Context::get('mid'), 'act', '', 'page', Context::get('page'), 'document_srl', ''));
 		$this->add('mid', Context::get('mid'));
-		$this->add('page', Context::get('page'));
+		$this->add('page', $output->get('page'));
 		$this->setMessage('success_deleted');
 	}
 
@@ -378,7 +317,7 @@ class boardController extends board
 			$obj->notify_message = 'N';
 			$obj->member_srl = -1*$logged_info->member_srl;
 			$obj->email_address = $obj->homepage = $obj->user_id = '';
-			$obj->user_name = $obj->nick_name = $this->createAnonymousName($this->module_info->anonymous_name ?: 'anonymous', $logged_info->member_srl, $obj->document_srl);
+			$obj->user_name = $obj->nick_name = 'anonymous';
 			$bAnonymous = true;
 		}
 		else
@@ -397,26 +336,8 @@ class boardController extends board
 		if(!$obj->comment_srl)
 		{
 			$obj->comment_srl = getNextSequence();
-		}
-		else
-		{
+		} else {
 			$comment = $oCommentModel->getComment($obj->comment_srl, $this->grant->manager);
-			if($this->module_info->protect_update_comment === 'Y' && $this->grant->manager == false)
-			{
-				$childs = $oCommentModel->getChildComments($obj->comment_srl);
-				if(count($childs) > 0)
-				{
-					return new Object(-1, 'msg_board_update_protect_comment');
-				}
-			}
-		}
-
-		$oMemberModel = getModel('member');
-		$member_info = $oMemberModel->getMemberInfoByMemberSrl($comment->member_srl);
-
-		if($member_info->is_admin == 'Y' && $logged_info->is_admin != 'Y')
-		{
-			return new Object(-1, 'msg_admin_comment_no_modify');
 		}
 
 		// if comment_srl is not existed, then insert the comment
@@ -435,24 +356,21 @@ class boardController extends board
 				$output = $oCommentController->insertComment($obj, $bAnonymous);
 
 			// parent_srl is not existed
-			}
-			else
-			{
+			} else {
 				$output = $oCommentController->insertComment($obj, $bAnonymous);
 			}
+			
+                // 모바일에서 작성시 정보 저장
+                if($this->module_info->use_mobile_express && Mobile::isFromMobilePhone()){
+                    $extra_vars = unserialize($oDocument->get('extra_vars'));
+                    $extra_vars->board->c[$obj->comment_srl]->mp = true;
+                    $extra_args->document_srl = $obj->document_srl;
+                    $extra_args->extra_vars = serialize($extra_vars);
+                    $tmp_output = executeQuery('board.updateDocumentExtra', $extra_args);
+                }
+                
 		// update the comment if it is not existed
-		}
-		else
-		{
-			if($this->module_info->protect_comment_regdate > 0 && $this->grant->manager == false)
-			{
-				if($comment->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-				{
-					$format =  lang('msg_protect_regdate_comment');
-					$massage = sprintf($format, $this->module_info->protect_document_regdate);
-					return new Object(-1, $massage);
-				}
-			}
+		} else {
 			// check the grant
 			if(!$comment->isGranted())
 			{
@@ -461,6 +379,7 @@ class boardController extends board
 
 			$obj->parent_srl = $comment->parent_srl;
 			$output = $oCommentController->updateComment($obj, $this->grant->manager);
+			$comment_srl = $obj->comment_srl;
 		}
 
 		if(!$output->toBool())
@@ -469,7 +388,6 @@ class boardController extends board
 		}
 
 		$this->setMessage('success_registed');
-		$this->setRedirectUrl(getNotEncodedUrl('', 'mid', Context::get('mid'), 'act', '', 'document_srl', $obj->document_srl) . '#comment_' . $obj->comment_srl);
 		$this->add('mid', Context::get('mid'));
 		$this->add('document_srl', $obj->document_srl);
 		$this->add('comment_srl', $obj->comment_srl);
@@ -482,79 +400,38 @@ class boardController extends board
 	{
 		// get the comment_srl
 		$comment_srl = Context::get('comment_srl');
-
-		$instant_delete = null;
-		if($this->grant->manager == true)
-		{
-			$instant_delete = Context::get('instant_delete');
-		}
-
 		if(!$comment_srl)
 		{
-			return new Object(-1, 'msg_invalid_request');
+			return $this->doError('msg_invalid_request');
 		}
 
-		$oCommentModel = getModel('comment');
-
-		if($this->module_info->protect_delete_comment === 'Y' && $this->grant->manager == false)
-		{
-			$childs = $oCommentModel->getChildComments($comment_srl);
-			if(count($childs) > 0)
-			{
-				return new Object(-1, 'msg_board_delete_protect_comment');
-			}
-		}
-		$comment = $oCommentModel->getComment($comment_srl, $this->grant->manager);
-		if($this->module_info->protect_comment_regdate > 0 && $this->grant->manager == false)
-		{
-			if($comment->get('regdate') < date('YmdHis', strtotime('-'.$this->module_info->protect_document_regdate.' day')))
-			{
-				$format =  lang('msg_protect_regdate_comment');
-				$massage = sprintf($format, $this->module_info->protect_document_regdate);
-				return new Object(-1, $massage);
-			}
-		}
 		// generate comment  controller object
 		$oCommentController = getController('comment');
 
-		if($this->module_info->comment_delete_message === 'yes' && $instant_delete != 'Y')
+		$output = $oCommentController->deleteComment($comment_srl, $this->grant->manager);
+		if(!$output->toBool())
 		{
-			$comment->content = '';
-			$comment->status = 7;
-			$output = $oCommentController->updateCommentByDelete($comment, $this->grant->manager);
-		}
-		elseif($this->module_info->comment_delete_message === 'only_commnet' && $instant_delete != 'Y')
-		{
-			$childs = $oCommentModel->getChildComments($comment_srl);
-			if(count($childs) > 0)
-			{
-				$comment->content = '';
-				$comment->status = 7;
-				$output = $oCommentController->updateCommentByDelete($comment, $this->grant->manager);
-			}
-			else
-			{
-				$output = $oCommentController->deleteComment($comment_srl, $this->grant->manager, FALSE, $childs);
-				if(!$output->toBool())
-				{
-					return $output;
-				}
-			}
-		}
-		else
-		{
-			$output = $oCommentController->deleteComment($comment_srl, $this->grant->manager);
-			if(!$output->toBool())
-			{
-				return $output;
-			}
+			return $output;
 		}
 
+            // 확장변수에 값이 있으면 삭제 (모바일 정보)
+            if($this->module_info->use_mobile_express){
+                $oDocumentModel = &getModel('document');
+                $oDocument = $oDocumentModel->getDocument($document_srl, false, false);
+                if($oDocument->isExists()){
+                    $extra_vars = unserialize($oDocument->get('extra_vars'));
+                    if($extra_vars->board->c[$comment_srl]){
+                        unset($extra_vars->board->c[$comment_srl]);
+                        $extra_args->document_srl = $document_srl;
+                        $extra_args->extra_vars = serialize($extra_vars);
+                        $tmp_output = executeQuery('board.updateDocumentExtra', $extra_args);
+                    }
+                }
+            }
 		$this->add('mid', Context::get('mid'));
 		$this->add('page', Context::get('page'));
 		$this->add('document_srl', $output->get('document_srl'));
 		$this->setMessage('success_deleted');
-		$this->setRedirectUrl(getNotEncodedUrl('', 'mid', Context::get('mid'), 'act', '', 'page', Context::get('page'), 'document_srl', $output->get('document_srl')));
 	}
 
 	/**
@@ -579,7 +456,6 @@ class boardController extends board
 		$this->add('page', Context::get('page'));
 		$this->add('document_srl', $output->get('document_srl'));
 		$this->setMessage('success_deleted');
-		$this->setRedirectUrl(getNotEncodedUrl('', 'mid', Context::get('mid'), 'act', '', 'page', Context::get('page'), 'document_srl', $output->get('document_srl')));
 	}
 
 	/**
@@ -677,38 +553,216 @@ class boardController extends board
 
 		return new Object();
 	}
-	
-	/**
-	 * Create an anonymous nickname.
-	 * 
-	 * @param string $format
-	 * @param int $member_srl
-	 * @param int $document_srl
-	 * @return string
-	 */
-	public function createAnonymousName($format, $member_srl, $document_srl)
+
+        
+	// 문서타입
+        function insertDocumentType(&$obj) {
+            $logged_info = Context::get('logged_info');
+            $args->document_srl = $obj->document_srl;
+            $args->member_srl = $logged_info->member_srl;
+            $args->ipaddress = $_SERVER['REMOTE_ADDR'];
+            $args->point = $obj->document_type;
+            //$queryid = 'board.deleteDocumentType';
+            //$output = executeQuery($queryid, $args);
+            $queryid = 'board.insertDocumentType';
+            $output = executeQuery($queryid, $args);
+            return $output;
+        }
+        /* 위키 컨텐츠 차이보기 */
+	function procBoardContentDiff() 
 	{
-		if (strpos($format, '$NUM') !== false)
-		{
-			$num = hash_hmac('sha256', $member_srl ?: \RX_CLIENT_IP, config('crypto.authentication_key'));
-			$num = sprintf('%08d', hexdec(substr($num, 0, 8)) % 100000000);
-			return strtr($format, array('$NUM' => $num));
-		}
-		elseif (strpos($format, '$DAILYNUM') !== false)
-		{
-			$num = hash_hmac('sha256', ($member_srl ?: \RX_CLIENT_IP) . ':date:' . date('Y-m-d'), config('crypto.authentication_key'));
-			$num = sprintf('%08d', hexdec(substr($num, 0, 8)) % 100000000);
-			return strtr($format, array('$DAILYNUM' => $num));
-		}
-		elseif (strpos($format, '$DOCNUM') !== false)
-		{
-			$num = hash_hmac('sha256', ($member_srl ?: \RX_CLIENT_IP) . ':document_srl:' . $document_srl, config('crypto.authentication_key'));
-			$num = sprintf('%08d', hexdec(substr($num, 0, 8)) % 100000000);
-			return strtr($format, array('$DOCNUM' => $num));
-		}
-		else
-		{
-			return $format;
-		}
+		$document_srl = Context::get("document_srl"); 
+		$history_srl = Context::get("history_srl"); 
+		$oDocumentModel = &getModel('document'); 
+		$oDocument = $oDocumentModel->getDocument($document_srl); 
+		$current_content = $oDocument->get('content');
+		$history = $oDocumentModel->getHistory($history_srl);
+		$history_content = $history->content; 
+		$this->add('old', $history_content); 
+		$this->add('current', $current_content);
 	}
+	/* 유저정보 (히스토리에 유저정보 기록) */
+        function _setUserInfo($is_any, $sor_obj, $out_obj=null){
+            // sor_obj 에 유저 정보가 없다면 기본값 리턴
+            if(!$sor_obj || !$sor_obj->member_srl) return $out_obj;
+
+            if(!$is_any){
+                $out_obj->member_srl = $sor_obj->member_srl;
+                $out_obj->email_address = $sor_obj->email_address;
+                $out_obj->homepage = $sor_obj->homepage;
+                $out_obj->user_id = $sor_obj->user_id;
+                $out_obj->user_name = $sor_obj->user_name;
+                $out_obj->nick_name = $sor_obj->nick_name;
+
+            }else{
+                $out_obj->user_id = '';
+                $member_srl = $sor_obj->member_srl;
+
+                // 보안 단계별 설정 (상담 사용시 1단계만)
+                //if((string)$this->module_info->use_anonymous_phase=='1'||$this->module_info->consultation == 'Y'){
+                //    $out_obj->member_srl = abs($member_srl);
+                //    $out_obj->user_id = 'anonymous';
+                //}elseif((string)$this->module_info->use_anonymous_phase=='3')
+                    $out_obj->member_srl = 0;
+                //else $out_obj->member_srl = -1 * abs($member_srl);
+
+                $out_obj->email_address = $out_obj->homepage = '';
+                $out_obj->user_name = $out_obj->nick_name = 'anonymous';
+            }
+
+            return $out_obj;
+        }
+        
+        /**
+        * @brief 문서의 상태 변경
+        **/
+        function procBoardChangeState(){
+            if(!Context::get('is_logged')) return new Object(-1, 'msg_not_permitted_act');
+
+            $logged_info = Context::get('logged_info');
+            $grant = $this->_getGrant(Context::get('cur_mid'), $logged_info);
+
+            // 관리자가 아니면 중단
+            if($logged_info->is_admin != 'Y' && !$grant->manager) return new Object(-1, 'msg_not_permitted_act');
+
+            $target_srls = explode(',',Context::get('target_srls'));
+            if(!count($target_srls)) return false;
+
+            // 상태값 유효성 체크
+            $state_value = Context::get('state_value');
+            if(!is_numeric($state_value)||($state_value>9&&$state_value<0)) return false;
+
+            $args->is_notice = $state_value?$state_value:'N';
+
+            // 문서 보기에서 변경한게 아니면 관리자 메뉴와 혼란을 피하기 위해 세션 삭제
+            if(!Context::get('document_srl')) unset($_SESSION['document_management']);
+
+             foreach($target_srls as $val){
+                $args->document_srl = $val;
+                $args->last_updater = $logged_info->nick_name.'('.Context::getLang('doc_state').')';
+                $output = executeQuery('board.updateDocumentState', $args);
+            }
+
+            // 결과 리턴
+            return new Object(0, 'success_updated');
+        }
+        
+        function procBoardHistoryRestore(){
+            if(!Context::get('is_logged')) return new Object(-1, 'msg_invalid_request');
+
+            // 문서번호가 없으면 에러
+            $history_srl = Context::get('target_srl');
+            if(!$history_srl) return new Object(-1, 'msg_invalid_request');
+
+            $oDocumentModel = &getModel('document');
+            $history_data = $oDocumentModel->getHistory($history_srl);
+            if(!$history_data->history_srl) return new Object(-1, 'msg_not_founded');
+
+            $logged_info = Context::get('logged_info');
+            $grant = $this->_getGrant(Context::get('cur_mid'), $logged_info);
+
+            // 관리자와 로그인유저가 아니면 오류
+            if($logged_info->is_admin != 'Y' && !$grant->manager && (!Context::get('is_logged'))) return new Object(-1, 'msg_not_permitted_act');
+
+            // 이미 존재하는 글인지 체크
+            $oDocument = $oDocumentModel->getDocument($history_data->document_srl, $this->grant->manager, false);
+            if(!$oDocument->isExists()) return new Object(-1, 'msg_not_founded');
+
+            $module_srl = $oDocument->get('module_srl');
+            $oModuleModel = &getModel('module');
+            $document_config = $oModuleModel->getModulePartConfig('document', $module_srl);
+            if(!isset($document_config->use_history)) $document_config->use_history = 'N';
+            $bUseHistory = $document_config->use_history == 'Y' || $document_config->use_history == 'Trace';
+
+            if(!$bUseHistory) return new Object(-1, 'msg_not_use_history');
+
+            // 같은 히스토리 문서 존재하는지 체크
+            $args->regdate = $oDocument->get('last_update');
+            $output = executeQuery('board.checkDocumentHistory', $args);
+
+            // 같은 히스토리 문서가 없고 히스토리 기능 사용중이면 새로 기록
+            if(!$output->data->count && $bUseHistory){
+                $hArgs->history_srl = getNextSequence();
+                $hArgs->module_srl = $module_srl;
+                $hArgs->document_srl = $oDocument->get('document_srl');
+                if($document_config->use_history == 'Y') $hArgs->content = $oDocument->get('content');
+                $hArgs->nick_name = $oDocument->get('nick_name');
+                $hArgs->member_srl = $oDocument->get('member_srl');
+                $hArgs->regdate = $oDocument->get('last_update');
+                $hArgs->ipaddress = $oDocument->get('ipaddress');
+                $output = executeQuery('document.insertHistory', $hArgs);
+            }
+
+            $oDocumentController = &getController('document');
+
+            // 맴버정보 구함
+            $oMemberModel = &getModel('member');
+            $member_info = $oMemberModel->getMemberInfoByMemberSrl($history_data->member_srl, $this->module_info->site_srl);
+
+            // 맴버가 있고 익명이 아니면 유저정보 입력
+            if($member_info && $history_data->member_srl > 0)
+                $obj = $this->_setUserInfo(false, $member_info);
+            else{
+                $obj->member_srl = $history_data->member_srl;
+                $obj->email_address = $obj->homepage = $obj->user_id = '';
+                $obj->user_name = $obj->nick_name = $history_data->nick_name;
+            }
+
+            $obj->document_srl = $history_data->document_srl;
+            $obj->last_update = $history_data->regdate;
+            $obj->content = $history_data->content;
+            $obj->ipaddress = $history_data->ipaddress;
+            $output = executeQuery('board.restoreDocumentHistory', $obj);
+            if(!$output->toBool()) return $output;
+
+            // 썸네일 파일 제거
+            FileHandler::removeDir(sprintf('files/cache/thumbnails/%s',getNumberingPath($obj->document_srl, 3)));
+
+             return new Object(0, 'success_restore');
+        }
+        function procBoardHistoryDelete(){
+            if(!Context::get('is_logged')) return new Object(-1, 'msg_not_permitted_act');
+
+            $logged_info = Context::get('logged_info');
+            $grant = $this->_getGrant(Context::get('cur_mid'), $logged_info);
+
+            // 관리자가 아니면 중단
+            if($logged_info->is_admin != 'Y' && !$grant->manager) return new Object(-1, 'msg_not_permitted_act');
+
+            // 문서번호가 없으면 에러
+            $history_srl = Context::get('target_srl');
+            if(!$history_srl) return new Object(-1, 'msg_invalid_request');
+
+            $oDocumentModel = &getModel('document');
+            $history_data = $oDocumentModel->getHistory($history_srl);
+            if(!$history_data->history_srl) return new Object(-1, 'msg_not_founded');
+
+            // 이미 존재하는 글인지 체크
+            $oDocument = $oDocumentModel->getDocument($history_data->document_srl, $grant->manager, false);
+            if(!$oDocument->isExists()) return new Object(-1, 'msg_not_founded');
+
+            $module_srl = $oDocument->get('module_srl');
+            $oModuleModel = &getModel('module');
+            $document_config = $oModuleModel->getModulePartConfig('document', $module_srl);
+            if(!isset($document_config->use_history)) $document_config->use_history = 'N';
+            $bUseHistory = $document_config->use_history == 'Y' || $document_config->use_history == 'Trace';
+
+            if(!$bUseHistory) return new Object(-1, 'msg_not_use_history');
+
+            $args->history_srl = $history_data->history_srl;
+            $args->module_srl = $history_data->module_srl;
+            $args->document_srl = $history_data->document_srl;
+            $output = executeQuery('document.deleteHistory', $args);
+
+            if(!$output->toBool()) return $output;
+
+             return new Object(0, 'success_deleted');
+        }
+        function _getGrant($cur_mid, $logged_info){
+            if(!$cur_mid || !$logged_info) return;
+
+            $oModuleModel = &getModel('module');
+            $cur_module_info = $oModuleModel->getModuleInfoByMid($cur_mid);
+            return $oModuleModel->getGrant($cur_module_info, $logged_info);
+        }
 }
