@@ -41,7 +41,7 @@ class documentAdminController extends document
 			$oDocumentController->deleteDocument($document_srl, true);
 		}
 
-		$this->setMessage(sprintf(lang('msg_checked_document_is_deleted'), $document_count) );
+		$this->setMessage(sprintf(Context::getLang('msg_checked_document_is_deleted'), $document_count) );
 	}
 
 	/**
@@ -79,20 +79,12 @@ class documentAdminController extends document
 			$oDocument = $oDocumentModel->getDocument($document_srl);
 			if(!$oDocument->isExists()) continue;
 
-			$oMemberModel = getModel('member');
-			$logged_info = Context::get('logged_info');
-			$member_info = $oMemberModel->getMemberInfoByMemberSrl($oDocument->get('member_srl'));
-			if($member_info->is_admin == 'Y' && $logged_info->is_admin != 'Y')
-			{
-				return new Object();
-			}
 			$source_category_srl = $oDocument->get('category_srl');
 
 			unset($obj);
 			$obj = $oDocument->getObjectVars();
 
 			// ISSUE https://github.com/xpressengine/xe-core/issues/32
-			$args_doc_origin = new stdClass();
 			$args_doc_origin->document_srl = $document_srl;
 			$output_ori = executeQuery('document.getDocument', $args_doc_origin, array('content'));              
 			$obj->content = $output_ori->data->content;
@@ -145,20 +137,11 @@ class documentAdminController extends document
 			$obj->module_srl = $module_srl;
 			$obj->category_srl = $category_srl;
 			$output = executeQuery('document.updateDocumentModule', $obj);
-			if(!$output->toBool())
-			{
+			if(!$output->toBool()) {
 				$oDB->rollback();
 				return $output;
 			}
-			else
-			{
-				$update_output = $oDocumentController->insertDocumentUpdateLog($obj);
-				if(!$update_output->toBool())
-				{
-					$oDB->rollback();
-					return $update_output;
-				}
-			}
+
 			//Move a module of the extra vars
 			$output = executeQuery('document.moveDocumentExtraVars', $obj);
 			if(!$output->toBool()) {
@@ -209,16 +192,24 @@ class documentAdminController extends document
 			$oDB->rollback();
 			return $output;
 		}
-		
-		// Call a trigger (after)
-		ModuleHandler::triggerCall('document.moveDocumentModule', 'after', $triggerObj);
+		// Call a trigger (before)
+		$output = ModuleHandler::triggerCall('document.moveDocumentModule', 'after', $triggerObj);
+		if(!$output->toBool())
+		{
+			$oDB->rollback();
+			return $output;
+		}
 
 		$oDB->commit();
-		
 		//remove from cache
-		foreach ($document_srl_list as $document_srl)
+		$oCacheHandler = CacheHandler::getInstance('object');
+		if($oCacheHandler->isSupport())
 		{
-			Rhymix\Framework\Cache::delete('document_item:'. getNumberingPath($document_srl) . $document_srl);
+			foreach($document_srl_list as $document_srl)
+			{
+				$cache_key_item = 'document_item:'. getNumberingPath($document_srl) . $document_srl;
+				$oCacheHandler->delete($cache_key_item);
+			}
 		}
 		return new Object();
 	}
@@ -429,7 +420,12 @@ class documentAdminController extends document
 
 		// Call a trigger (before)
 		$triggerObj->copied_srls = $copied_srls;
-		ModuleHandler::triggerCall('document.copyDocumentModule', 'after', $triggerObj);
+		$output = ModuleHandler::triggerCall('document.copyDocumentModule', 'after', $triggerObj);
+		if(!$output->toBool())
+		{
+			$oDB->rollback();
+			return $output;
+		}
 
 		$oDB->commit();
 
@@ -459,11 +455,18 @@ class documentAdminController extends document
 				$document_srl_list[] = $oDocument->document_srl;
 			}
 		}
-		
 		//remove from cache
-		foreach ($document_srl_list as $document_srl)
+		$oCacheHandler = CacheHandler::getInstance('object');
+		if($oCacheHandler->isSupport())
 		{
-			Rhymix\Framework\Cache::delete('document_item:'. getNumberingPath($document_srl) . $document_srl);
+			if(is_array($document_srl_list))
+			{
+				foreach($document_srl_list as $document_srl)
+				{
+					$cache_key_item = 'document_item:'. getNumberingPath($document_srl) . $document_srl;
+					$oCacheHandler->delete($cache_key_item);
+				}
+			}
 		}
 		return $output;
 	}
@@ -475,8 +478,7 @@ class documentAdminController extends document
 	function procDocumentAdminInsertConfig()
 	{
 		// Get the basic information
-		$config = new stdClass();
-		$config->view_count_option = Context::get('view_count_option');
+		$config = Context::gets('thumbnail_type');
 		// Insert by creating the module Controller object
 		$oModuleController = getController('module');
 		$output = $oModuleController->insertModuleConfig('document',$config);
@@ -495,7 +497,6 @@ class documentAdminController extends document
 
 		if($document_srl)
 		{
-			$args = new stdClass();
 			$args->document_srl = $document_srl;
 			$output = executeQuery('document.deleteDeclaredDocuments', $args);
 			if(!$output->toBool()) return $output;
@@ -579,7 +580,7 @@ class documentAdminController extends document
 
 		$this->setMessage('success_registed');
 
-		$returnUrl = Context::get('success_return_url') ? Context::get('success_return_url') : getNotEncodedUrl('', 'module', 'admin', 'act', 'dispDocumentAdminAlias');
+		$returnUrl = Context::get('success_return_url') ? Context::get('success_return_url') : getNotEncodedUrl('', 'module', 'admin', 'act', 'dispDocumentAdminAlias', 'document_srl', $args->document_srl);
 		$this->setRedirectUrl($returnUrl);
 	}
 
@@ -671,7 +672,13 @@ class documentAdminController extends document
 			if(!$output->toBool()) return $output;
 		}
 
-		Rhymix\Framework\Cache::delete("site_and_module:module_document_extra_keys:$module_srl");
+		$oCacheHandler = CacheHandler::getInstance('object', NULL, TRUE);
+		if($oCacheHandler->isSupport())
+		{
+			$object_key = 'module_document_extra_keys:'.$module_srl;
+			$cache_key = $oCacheHandler->getGroupKey('site_and_module', $object_key);
+			$oCacheHandler->delete($cache_key);
+		}
 	}
 
 	/**
@@ -706,7 +713,6 @@ class documentAdminController extends document
 	{
 		$document_srl = Context::get('document_srl');
 		$alias_srl = Context::get('target_srl');
-		$args = new stdClass();
 		$args->alias_srl = $alias_srl;
 		$output = executeQuery("document.deleteAlias", $args);
 
@@ -721,21 +727,13 @@ class documentAdminController extends document
 	  */
 	function procDocumentAdminMoveToTrash()
 	{
-		$logged_info = Context::get('logged_info');
 		$document_srl = Context::get('document_srl');
 
 		$oDocumentModel = getModel('document');
 		$oDocumentController = getController('document');
 		$oDocument = $oDocumentModel->getDocument($document_srl, false, false);
 		if(!$oDocument->isGranted()) return $this->stop('msg_not_permitted');
-
-		$oMemberModel = getModel('member');
-		$member_info = $oMemberModel->getMemberInfoByMemberSrl($oDocument->get('member_srl'));
-		if($member_info->is_admin == 'Y' && $logged_info->is_admin != 'Y')
-		{
-			return new Object(-1, 'msg_admin_document_no_move_to_trash');
-		}
-
+	
 		$oModuleModel = getModel('module');
 		$module_info = $oModuleModel->getModuleInfoByDocumentSrl($document_srl);
 
@@ -892,7 +890,15 @@ class documentAdminController extends document
 		}
 
 		// call a trigger (after)
-		ModuleHandler::triggerCall('document.restoreTrash', 'after', $originObject);
+		if($output->toBool())
+		{
+			$trigger_output = ModuleHandler::triggerCall('document.restoreTrash', 'after', $originObject);
+			if(!$trigger_output->toBool())
+			{
+				$oDB->rollback();
+				return $trigger_output;
+			}
+		}
 
 		// commit
 		$oDB->commit();
